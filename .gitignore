@@ -1,7 +1,9 @@
-advanced_models/
-esl_env/
-models/
-*.pyc
+# Python virtual environment
+venv/
+
+# Python cache files
+__pycache__/
+*.py[cod]
 *.pyo
 *.pyd
 *.pyw
