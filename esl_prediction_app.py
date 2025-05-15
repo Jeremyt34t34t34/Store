@@ -48,8 +48,7 @@ def load_and_preprocess_data():
         df.columns = df.columns.astype(str).str.strip()
         
         # Define ESL columns
-        esl_columns = [
-            '1.54"', '2.66"', '4.20"',
+        region_columns = [
             'Central Market 1.54"', 'Central Market 2.66"',
             'Checkout 1.54"', 'Checkout 2.66"',
             'Pharmacy 1.54"', 'Pharmacy 2.66"',
@@ -60,6 +59,8 @@ def load_and_preprocess_data():
             'Produce 1.54"', 'Produce 2.66"', 'Produce 4.20"',
             'Bakery 1.54"', 'Bakery 2.66"'
         ]
+        size_columns = ['1.54"', '2.66"', '4.20"']
+        esl_columns = region_columns + size_columns
         
         # Convert specified columns to numeric values
         for col in esl_columns + ['Total', 'Sales SQ FT']:
@@ -116,22 +117,23 @@ def predict_new_store(model, sales_sqft, major_type, df):
     return round(prediction)
 
 def predict_esl_distribution(sales_sqft, major_type, df, esl_columns):
-    """Predict ESL distribution by region"""
-    # Calculate average distribution for the major type
-    avg_distribution = df[df['Major Type'] == major_type][esl_columns].mean()
-    
-    # Calculate total ESL
+    """Predict ESL distribution by region and size"""
+    # Only use region columns for distribution
+    region_columns = [col for col in esl_columns if col not in ['1.54"', '2.66"', '4.20"']]
+    avg_distribution = df[df['Major Type'] == major_type][region_columns].mean()
     model = load_model()
     if model is None:
         model = train_and_save_model(df)
     total_esl = predict_new_store(model, sales_sqft, major_type, df)
-    
-    # Calculate distribution
+    # Calculate region distribution
     distribution = {}
-    for col in esl_columns:
+    for col in region_columns:
         percentage = avg_distribution[col] / avg_distribution.sum()
         distribution[col] = round(total_esl * percentage)
-    
+    # Dynamically calculate size totals
+    distribution['1.54"'] = sum(distribution[col] for col in region_columns if '1.54"' in col)
+    distribution['2.66"'] = sum(distribution[col] for col in region_columns if '2.66"' in col)
+    distribution['4.20"'] = sum(distribution[col] for col in region_columns if '4.20"' in col)
     return distribution
 
 def main():
@@ -198,10 +200,15 @@ def main():
             if region_prediction:
                 st.subheader("📍 ESL Distribution by Region")
                 
+                # Define the new order
+                total_keys = ['1.54"', '2.66"', '4.20"']
+                region_keys = [k for k in region_prediction.keys() if k not in total_keys]
+                display_keys = total_keys + region_keys
+                
                 # Convert to DataFrame for better display
                 df_results = pd.DataFrame({
-                    'Region': region_prediction.keys(),
-                    'Count': region_prediction.values()
+                    'Region': display_keys,
+                    'Count': [region_prediction[k] for k in display_keys]
                 })
                 df_results['Percentage'] = (df_results['Count'] / total_prediction * 100).round(2)
                 df_results['Percentage'] = df_results['Percentage'].astype(str) + '%'
@@ -222,8 +229,8 @@ def main():
             
             # Create visualization
             fig, ax = plt.subplots(figsize=(10, 6))
-            regions = list(region_prediction.keys())
-            counts = list(region_prediction.values())
+            regions = display_keys
+            counts = [region_prediction[k] for k in display_keys]
             
             # Create bar plot
             bars = ax.bar(regions, counts, color=sns.color_palette("viridis", len(regions)))
@@ -260,11 +267,17 @@ def main():
         # Create comparison bar chart
         fig_comp, ax_comp = plt.subplots(figsize=(12, 6))
         
-        x = np.arange(len(regions))
+        x = np.arange(len(display_keys))
         width = 0.35
         
-        predicted_percentages = [count/total_prediction*100 for count in counts]
-        actual_percentages = df_region.loc[selected_type].values
+        predicted_percentages = [region_prediction[k]/total_prediction*100 for k in display_keys]
+        actual_counts = df_region.loc[selected_type][display_keys].values
+        region_keys_only = [k for k in display_keys if k not in total_keys]
+        region_sum = df_region.loc[selected_type][region_keys_only].sum()
+        actual_percentages = []
+        for k in display_keys:
+            val = df_region.loc[selected_type][k] / region_sum * 100
+            actual_percentages.append(val)
         
         ax_comp.bar(x - width/2, predicted_percentages, width, label='Predicted', 
                    color='skyblue')
@@ -272,7 +285,7 @@ def main():
                    color='lightgreen')
         
         ax_comp.set_xticks(x)
-        ax_comp.set_xticklabels(regions, rotation=45, ha='right')
+        ax_comp.set_xticklabels(display_keys, rotation=45, ha='right')
         ax_comp.legend()
         ax_comp.set_ylabel('Percentage (%)')
         ax_comp.set_title('Predicted vs Average Distribution')
